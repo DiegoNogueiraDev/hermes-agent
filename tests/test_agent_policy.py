@@ -173,3 +173,19 @@ async def test_api_rate_limit_is_429_with_retry_after(store):
         body = json.loads(await r.text())
         assert body["error"]["code"] == "rate_limited"
         assert store.recent_denials()[0]["surface"] == "api"
+
+
+# ── Changing an agent's tools must not rotate its token (clients hold a copy) ──
+
+def test_set_tools_changes_permissions_without_rotating_token(store):
+    token = store.add_agent("reader", tools=["messages_*"])
+    store.set_tools("reader", ["find_files"])
+    policy = store.authenticate(token)
+    assert policy is not None
+    assert policy.allows("find_files")
+    assert not policy.allows("messages_read")
+
+
+def test_set_tools_unknown_agent_is_an_error(store):
+    with pytest.raises(KeyError):
+        store.set_tools("ghost", ["find_files"])

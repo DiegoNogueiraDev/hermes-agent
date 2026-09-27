@@ -84,6 +84,12 @@ class PolicyStore:
             )
         return token
 
+    def set_tools(self, agent_id: str, tools: list[str]) -> None:
+        """Replace an agent's allowed tool patterns, keeping its token (clients hold a copy)."""
+        with self._connect() as conn:
+            if conn.execute("UPDATE agent_policies SET tools=? WHERE agent_id=?", (json.dumps(tools), agent_id)).rowcount != 1:
+                raise KeyError(f"agent_policies: no agent {agent_id!r}")
+
     def set_enabled(self, agent_id: str, enabled: bool) -> None:
         with self._connect() as conn:
             if conn.execute("UPDATE agent_policies SET enabled=? WHERE agent_id=?", (int(enabled), agent_id)).rowcount != 1:
@@ -163,6 +169,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     add.add_argument("--tools", default="*", help="comma-separated fnmatch patterns of allowed MCP tools")
     add.add_argument("--rate", type=int, default=60, help="calls per minute")
     add.add_argument("--concurrent", type=int, default=4)
+    st = sub.add_parser("set-tools", help="replace an agent's allowed tools without rotating its token")
+    st.add_argument("agent_id")
+    st.add_argument("--tools", required=True, help="comma-separated fnmatch patterns ('' = none)")
     for name in ("disable", "enable"):
         sub.add_parser(name).add_argument("agent_id")
     sub.add_parser("list")
@@ -173,6 +182,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     if args.cmd == "add":
         tools = [t.strip() for t in args.tools.split(",") if t.strip()]
         print(store.add_agent(args.agent_id, tools, args.rate, args.concurrent))
+    elif args.cmd == "set-tools":
+        store.set_tools(args.agent_id, [t.strip() for t in args.tools.split(",") if t.strip()])
     elif args.cmd in ("disable", "enable"):
         store.set_enabled(args.agent_id, args.cmd == "enable")
     elif args.cmd == "list":

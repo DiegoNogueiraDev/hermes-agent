@@ -111,6 +111,9 @@ def build_units() -> dict[str, str]:
         'Environment="HERMES_MCP_TRANSPORT=streamable-http"\n'
         f'Environment="HERMES_MCP_HOST={MCP_BIND_HOST}"\n'
         f'Environment="HERMES_MCP_PORT={MCP_BIND_PORT}"\n'
+        # Read-only/creative external toolset (includes find_files); never the -dangerous one.
+        # Which of these tools each agent may call is still decided by agent_policies (F2).
+        'Environment="HERMES_MCP_EXPOSE_TOOLS=hermes-mcp-external"\n'
     )
     # The gateway activates whichever platform adapters have credentials/
     # config enabling them; with only API_SERVER_ENABLED=true set (no
