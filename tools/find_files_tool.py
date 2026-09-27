@@ -37,7 +37,10 @@ FIND_FILES_SCHEMA = {
         "type": "object",
         "properties": {
             "task": {"type": "string", "description": "The task in natural language (issue, bug report or request)."},
-            "path": {"type": "string", "description": "Any file or directory inside the repository (default: current directory)."},
+            "path": {"type": "string", "description": (
+                "Absolute path (or ~/...) of any file or directory inside the repository, on the machine "
+                "running Hermes. Relative paths only work for the local agent, which has a working directory."
+            )},
             "top": {"type": "integer", "description": "How many files to return, 1 to 50 (default 10)."},
         },
         "required": ["task"],
@@ -62,6 +65,16 @@ def _repo_root(path: str, task_id: str) -> str | None:
 def find_files_tool(task: str, path: str = ".", top: int = 10, task_id: str = "default") -> str:
     if not isinstance(task, str) or len(task.strip()) < 3:
         return _error("task: describe the task in natural language")
+    import os
+
+    from tools.file_tools_paths import _authoritative_workspace_root
+
+    raw = os.path.expanduser(path or ".")
+    if not os.path.isabs(raw) and _authoritative_workspace_root(task_id) is None:
+        # X3 (27/09/2026): an MCP caller has no working directory here, so "." resolved against the
+        # server process (the Hermes worktree, 12k files, ~15 s per call) and stalled the service queue.
+        return _error(f"path {path!r} must be an absolute path (or ~/...) on the machine running Hermes: "
+                      "this call has no working directory of its own")
     repo = _repo_root(path, task_id)
     if repo is None:
         return _error(f"path {path!r} is not inside a git repository")

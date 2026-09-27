@@ -62,3 +62,11 @@ def test_unreachable_service_is_an_error_with_reason(repo, monkeypatch):
     monkeypatch.setenv("FIND_FILES_URL", f"http://127.0.0.1:{closed_port}/find")
     out = _call({"task": "reject requests whose bearer token is empty", "path": str(repo)})
     assert "find-files service unreachable" in out["error"]
+
+
+def test_relative_path_without_task_cwd_is_an_error(monkeypatch):
+    """X3: an MCP caller has no working directory on the lab; the default "." used to resolve
+    against the server process (the Hermes worktree, 12k files) and stalled the service queue."""
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
+    out = _call({"task": "reject requests whose bearer token is empty"})
+    assert "absolute path" in out["error"]
