@@ -94,6 +94,32 @@ CREATE TABLE IF NOT EXISTS state_meta (
     value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS agent_policies (
+    agent_id TEXT PRIMARY KEY,
+    token_sha256 TEXT NOT NULL UNIQUE,
+    tools TEXT NOT NULL DEFAULT '["*"]',
+    rate_per_min INTEGER NOT NULL DEFAULT 60,
+    max_concurrent INTEGER NOT NULL DEFAULT 4,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_rate_windows (
+    agent_id TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    count INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, window_start)
+);
+
+CREATE TABLE IF NOT EXISTS agent_denials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    agent_id TEXT NOT NULL,
+    surface TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    detail TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);

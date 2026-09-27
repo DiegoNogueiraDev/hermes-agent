@@ -24,6 +24,14 @@ The core assumption is that Hermes is a **personal agent** with one trusted oper
 - **Gateway Security:** Authorized callers (Telegram, Discord, Slack, etc.) receive equal trust. Session keys are used for routing, not as authorization boundaries.
 - **Execution:** Defaults to `terminal.backend: local` (direct host execution). Container isolation (Docker, Modal, Daytona) is opt-in for sandboxing.
 
+### Per-Agent Access on the Network Surfaces
+When the MCP (streamable-http) and API server listeners are exposed beyond loopback, other agents can call them with their own tokens instead of the shared operator token.
+- **Identity:** each agent gets a token issued by `python -m agent_policy add <agent_id>`, shown once and stored only as its sha256 in `state.db` (`agent_policies`). The `agent_id` is the agent's agentbus name.
+- **Authorization:** on MCP, every `tools/call` is checked against the agent's allowed tool patterns; a forbidden tool returns 403. On the API server, per-agent toolset restriction is not enforced yet: an agent token reaches the same toolsets as the operator.
+- **Quotas:** calls per minute are counted per agent across both surfaces (429 with `Retry-After`); simultaneous requests are capped per agent within each surface process.
+- **Audit:** every refusal is stored in `agent_denials` (agent, surface, reason, tool or path).
+- **Limits of this model:** the shared operator tokens (`MCP_SERVER_TOKEN`, `API_SERVER_KEY`) stay unrestricted, tokens travel in plain HTTP inside the tailnet, and this is access control between cooperating agents, not isolation from a malicious co-tenant.
+
 ### Dangerous Command Approval
 The approval system (`tools/approval.py`) is a core security boundary. Terminal commands, file operations, and other potentially destructive actions are gated behind explicit user confirmation before execution. The approval mode is configurable via `approvals.mode` in `config.yaml`:
 - `"on"` (default) — prompts the user to approve dangerous commands.

@@ -112,7 +112,19 @@ def resolve_network_settings(
     return {"transport": resolved_transport, "host": resolved_host, "port": resolved_port}
 
 
-def build_bearer_auth_middleware(token: str):
+def _tool_call_name(body: bytes) -> str:
+    """Name of the tool in a JSON-RPC ``tools/call`` body, or "" for any other message."""
+    import json
+    try:
+        msg = json.loads(body or b"null")
+    except ValueError:
+        return ""
+    if isinstance(msg, dict) and msg.get("method") == "tools/call":
+        return str((msg.get("params") or {}).get("name") or "")
+    return ""
+
+
+def build_bearer_auth_middleware(token: str, store=None):
     """Build a Starlette middleware class requiring ``Authorization: Bearer <token>``.
 
     The MCP SDK's streamable-http transport has no built-in authentication
@@ -124,18 +136,52 @@ def build_bearer_auth_middleware(token: str):
     from starlette.requests import Request
     from starlette.responses import JSONResponse
 
+    from agent_policy import ConcurrencyGate
+
+    gate = ConcurrencyGate()
+
     class BearerAuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             client_ip = request.client.host if request.client else "unknown"
             auth_header = request.headers.get("Authorization", "")
             presented = auth_header[7:] if auth_header.startswith("Bearer ") else ""
-            if not presented or not _constant_time_eq(presented, token):
+            if presented and _constant_time_eq(presented, token):
+                logger.info("MCP: authenticated request from %s (%s %s)", client_ip, request.method, request.url.path)
+                return await call_next(request)
+            policy = store.authenticate(presented) if (store is not None and presented) else None
+            if policy is None:
                 logger.warning("MCP: auth failed from %s (%s %s)", client_ip, request.method, request.url.path)
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
-            logger.info("MCP: authenticated request from %s (%s %s)", client_ip, request.method, request.url.path)
-            return await call_next(request)
+            tool = _tool_call_name(await request.body())
+            if not tool:
+                return await call_next(request)
+            if not policy.allows(tool):
+                store.record_denial(policy.agent_id, "mcp", "forbidden_tool", tool)
+                logger.warning("MCP: agent %s denied tool %s", policy.agent_id, tool)
+                return JSONResponse({"error": "forbidden", "agent": policy.agent_id, "tool": tool}, status_code=403)
+            wait = store.take_rate_slot(policy)
+            if wait is not None:
+                store.record_denial(policy.agent_id, "mcp", "rate_limited", tool)
+                return _too_many(policy.agent_id, wait)
+            if not gate.try_acquire(policy):
+                store.record_denial(policy.agent_id, "mcp", "too_many_concurrent", tool)
+                return _too_many(policy.agent_id, 1.0)
+            try:
+                return await call_next(request)
+            finally:
+                gate.release(policy)
 
     return BearerAuthMiddleware
+
+
+def _too_many(agent_id: str, wait: float):
+    from starlette.responses import JSONResponse
+
+    seconds = str(int(wait + 0.999))
+    return JSONResponse(
+        {"error": "rate_limited", "agent": agent_id, "retry_after": int(seconds)},
+        status_code=429, headers={"Retry-After": seconds},
+    )
 
 
 def _constant_time_eq(a: str, b: str) -> bool:

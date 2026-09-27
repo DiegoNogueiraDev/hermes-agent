@@ -687,6 +687,10 @@ class APIServerAdapter(BasePlatformAdapter):
         if not self._api_key:
             return None  # No key configured — allow all (local-only use)
 
+        agent_id = request.get("agent_id")
+        if isinstance(agent_id, str) and agent_id:
+            return None  # Authenticated per agent by agent_policy_middleware (only it sets a str here)
+
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:].strip()
@@ -699,6 +703,48 @@ class APIServerAdapter(BasePlatformAdapter):
             {"error": {"message": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}},
             status=401,
         )
+
+    def agent_policy_middleware(self):
+        """aiohttp middleware: per-agent tokens (agent_policy.PolicyStore) with quota and concurrency.
+
+        The shared API_SERVER_KEY keeps its old behaviour. An unknown token falls through
+        so each handler's _check_auth still answers 401 exactly as before.
+        """
+        from agent_policy import ConcurrencyGate, PolicyStore
+
+        gate = ConcurrencyGate()
+
+        @web.middleware
+        async def _mw(request, handler):
+            header = request.headers.get("Authorization", "")
+            presented = header[7:].strip() if header.startswith("Bearer ") else ""
+            if not presented or (self._api_key and hmac.compare_digest(presented, self._api_key)):
+                return await handler(request)
+            if getattr(self, "_policy_store", None) is None:
+                self._policy_store = PolicyStore()
+            store = self._policy_store
+            policy = store.authenticate(presented)
+            if policy is None:
+                return await handler(request)
+            request["agent_id"] = policy.agent_id
+            wait = store.take_rate_slot(policy)
+            reason = "rate_limited" if wait is not None else None
+            if reason is None and not gate.try_acquire(policy):
+                wait, reason = 1.0, "too_many_concurrent"
+            if reason is not None:
+                store.record_denial(policy.agent_id, "api", reason, f"{request.method} {request.path}")
+                seconds = str(int(wait + 0.999))
+                return web.json_response(
+                    {"error": {"message": f"Agent {policy.agent_id} over its limit", "type": "rate_limit_error",
+                               "code": "rate_limited", "retry_after": int(seconds)}},
+                    status=429, headers={"Retry-After": seconds},
+                )
+            try:
+                return await handler(request)
+            finally:
+                gate.release(policy)
+
+        return _mw
 
     # ------------------------------------------------------------------
     # Session DB helper
@@ -2788,6 +2834,7 @@ class APIServerAdapter(BasePlatformAdapter):
 
         try:
             mws = [mw for mw in (cors_middleware, body_limit_middleware, security_headers_middleware) if mw is not None]
+            mws.append(self.agent_policy_middleware())
             self._app = web.Application(middlewares=mws)
             self._app["api_server_adapter"] = self
             self._app.router.add_get("/health", self._handle_health)

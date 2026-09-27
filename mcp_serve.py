@@ -1025,7 +1025,8 @@ def _run_streamable_http(server: "FastMCP", bridge: "EventBridge", host: str, po
         )
     app = server.streamable_http_app()
     if token:
-        app.add_middleware(build_bearer_auth_middleware(token))
+        from agent_policy import PolicyStore
+        app.add_middleware(build_bearer_auth_middleware(token, store=PolicyStore()))
     else:
         logger.warning(
             "MCP: no MCP_SERVER_TOKEN set — all requests on %s:%d are accepted "
