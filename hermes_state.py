@@ -120,6 +120,23 @@ CREATE TABLE IF NOT EXISTS agent_denials (
     detail TEXT
 );
 
+CREATE TABLE IF NOT EXISTS tool_cache (
+    key TEXT PRIMARY KEY,
+    tool TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_cache_stats (
+    tool TEXT PRIMARY KEY,
+    hits INTEGER NOT NULL DEFAULT 0,
+    misses INTEGER NOT NULL DEFAULT 0,
+    bypasses INTEGER NOT NULL DEFAULT 0,
+    saved_chars INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);

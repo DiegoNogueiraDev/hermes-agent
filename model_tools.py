@@ -728,11 +728,28 @@ def handle_function_call(
                 enabled_tools=sandbox_enabled,
             )
         else:
-            result = registry.dispatch(
-                function_name, function_args,
-                task_id=task_id,
-                user_task=user_task,
-            )
+            # Cross-agent cache for read-only tools (tool_result_cache.py). A cache
+            # failure is logged and the tool runs normally; it never fails the call.
+            import tool_result_cache
+            cache_key = cached = None
+            try:
+                cache_key = tool_result_cache.key_for(function_name, function_args, task_id)
+                cached = tool_result_cache.fetch(cache_key) if cache_key else None
+            except Exception as cache_exc:
+                logger.warning("tool_result_cache lookup failed for %s: %s", function_name, cache_exc)
+            if cached is not None:
+                result = cached
+            else:
+                result = registry.dispatch(
+                    function_name, function_args,
+                    task_id=task_id,
+                    user_task=user_task,
+                )
+                if cache_key is not None:
+                    try:
+                        tool_result_cache.store(cache_key, result)
+                    except Exception as cache_exc:
+                        logger.warning("tool_result_cache store failed for %s: %s", function_name, cache_exc)
         duration_ms = int((time.monotonic() - _dispatch_start) * 1000)
 
         try:
