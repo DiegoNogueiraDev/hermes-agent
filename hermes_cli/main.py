@@ -9560,6 +9560,36 @@ Examples:
         action="store_true",
         help="Enable verbose logging on stderr",
     )
+    mcp_serve_p.add_argument(
+        "--expose-tools",
+        metavar="TOOLSET",
+        default=None,
+        help=(
+            "Also expose a tool toolset (e.g. hermes-mcp-external) as MCP "
+            "tools, dispatched through the same registry as the CLI/gateway. "
+            "Default: disabled (only the messaging-bridge tools are exposed). "
+            "See mcp_server.expose_tools in config.yaml for a persistent setting."
+        ),
+    )
+    mcp_serve_p.add_argument(
+        "--transport",
+        choices=["stdio", "streamable-http"],
+        default=None,
+        help=(
+            "stdio (default): spawned locally by the calling MCP client. "
+            "streamable-http: real network listener (e.g. for other machines "
+            "on a Tailscale tailnet) — requires MCP_SERVER_TOKEN when --host "
+            "is not 127.0.0.1. See mcp_server.transport in config.yaml."
+        ),
+    )
+    mcp_serve_p.add_argument(
+        "--host", default=None, metavar="HOST",
+        help="Bind host for --transport streamable-http (default: 127.0.0.1, or mcp_server.host).",
+    )
+    mcp_serve_p.add_argument(
+        "--port", type=int, default=None, metavar="PORT",
+        help="Bind port for --transport streamable-http (default: 8643, or mcp_server.port).",
+    )
     _add_accept_hooks_flag(mcp_serve_p)
 
     mcp_add_p = mcp_sub.add_parser(

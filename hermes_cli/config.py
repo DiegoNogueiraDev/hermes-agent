@@ -389,6 +389,19 @@ DEFAULT_CONFIG = {
     "fallback_providers": [],
     "credential_pool_strategies": {},
     "toolsets": ["hermes-cli"],
+    "mcp_server": {
+        # Toolset to expose as MCP tools when running `hermes mcp serve`
+        # (e.g. "hermes-mcp-external" or "hermes-mcp-external-dangerous").
+        # Empty string = disabled — only the 10 messaging-bridge tools are
+        # exposed. Overridden by --expose-tools and HERMES_MCP_EXPOSE_TOOLS.
+        "expose_tools": "",
+        # "stdio" (default, spawned locally by the calling MCP client) or
+        # "streamable-http" (real network listener — see MCP_SERVER_TOKEN
+        # in .env, required whenever host is not 127.0.0.1/localhost).
+        "transport": "stdio",
+        "host": "127.0.0.1",
+        "port": 8643,
+    },
     "agent": {
         "max_turns": 90,
         # Inactivity timeout for gateway agent execution (seconds).
@@ -2271,6 +2284,14 @@ OPTIONAL_ENV_VARS = {
         "url": None,
         "password": False,
         "category": "messaging",
+        "advanced": True,
+    },
+    "MCP_SERVER_TOKEN": {
+        "description": "Bearer token required by `hermes mcp serve --transport streamable-http` when bound to a non-loopback host. Server refuses to start on a non-loopback host without this set.",
+        "prompt": "MCP server auth token (required for network access)",
+        "url": None,
+        "password": True,
+        "category": "tool",
         "advanced": True,
     },
     "API_SERVER_MODEL_NAME": {
