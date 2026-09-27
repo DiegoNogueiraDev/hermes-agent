@@ -139,8 +139,19 @@ def _api_app(store):
         err = adapter._check_auth(request)
         return err if err is not None else web.json_response({"agent": request.get("agent_id", "operator")})
 
-    app = web.Application(middlewares=[adapter.agent_policy_middleware()])
+    from gateway.platforms.api_server import _api_request_profile
+
+    @web.middleware
+    async def profile_from_header(request, handler):
+        token = _api_request_profile.set(request.headers.get("X-Test-Profile") or None)
+        try:
+            return await handler(request)
+        finally:
+            _api_request_profile.reset(token)
+
+    app = web.Application(middlewares=[profile_from_header, adapter.agent_policy_middleware()])
     app.router.add_get("/v1/models", protected)
+    app.router.add_post("/v1/chat/completions", protected)
     return app
 
 
@@ -189,3 +200,34 @@ def test_set_tools_changes_permissions_without_rotating_token(store):
 def test_set_tools_unknown_agent_is_an_error(store):
     with pytest.raises(KeyError):
         store.set_tools("ghost", ["find_files"])
+
+
+# ── T2 review: agent tokens cannot run the agent through the API by default ──
+
+@pytest.mark.asyncio
+async def test_api_agent_without_api_agent_cannot_run_the_agent(store):
+    token = store.add_agent("finder", tools=["find_files"])
+    headers = {"Authorization": f"Bearer {token}"}
+    async with TestClient_(TestServer(_api_app(store))) as cli:
+        run = await cli.post("/v1/chat/completions", headers=headers, json={"messages": []})
+        read = await cli.get("/v1/models", headers=headers)
+        assert run.status == 403
+        assert read.status == 200
+    assert store.recent_denials()[0]["reason"] == "forbidden_endpoint"
+
+
+@pytest.mark.asyncio
+async def test_api_agent_with_api_agent_may_run_the_agent(store):
+    token = store.add_agent("runner", tools=["api:agent"])
+    async with TestClient_(TestServer(_api_app(store))) as cli:
+        r = await cli.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"}, json={"messages": []})
+        assert r.status == 200
+
+
+@pytest.mark.asyncio
+async def test_api_named_profile_fails_closed_for_agent_tokens(store):
+    token = store.add_agent("finder", tools=["find_files"])
+    headers = {"Authorization": f"Bearer {token}", "X-Test-Profile": "team"}
+    async with TestClient_(TestServer(_api_app(store))) as cli:
+        r = await cli.get("/v1/models", headers=headers)
+        assert r.status == 401

@@ -228,7 +228,7 @@ authorization model, but the rules below apply uniformly.
 When the MCP (streamable-http) and API server listeners are exposed beyond loopback, other agents call them with their own tokens instead of the shared operator token.
 
 - **Identity:** each agent gets a token issued by `python -m agent_policy add <agent_id>`, shown once and stored only as its sha256 in `state.db` (`agent_policies`). The `agent_id` is the agent's agentbus name.
-- **Authorization:** on MCP, every `tools/call` is checked against the agent's allowed tool patterns; a forbidden tool returns 403. On the API server, per-agent toolset restriction is not enforced yet: an agent token reaches the same toolsets as the operator.
+- **Authorization:** on MCP, every `tools/call` is checked against the agent's allowed tool patterns; a forbidden tool returns 403. On the API server an agent token only reaches read-only routes (`/health`, `/v1/health`, `/health/detailed`, `/v1/models`); running the agent (chat/completions, responses, runs, jobs) requires the explicit `api:agent` permission, because the agent run brings its whole toolset (terminal included). Named profiles fail closed for agent tokens.
 - **Quotas:** calls per minute are counted per agent across both surfaces (429 with `Retry-After`); simultaneous requests are capped per agent within each surface process.
 - **Audit:** every refusal is stored in `agent_denials` (agent, surface, reason, tool or path).
 - **Enrollment:** a network agent may request entry via the read-only beacon (`GET /v1/beacon`, `POST /v1/enroll`); this only creates a pending request. No credential is issued and no order is executed until the operator approves. Auto-enrollment with execution is never provided.

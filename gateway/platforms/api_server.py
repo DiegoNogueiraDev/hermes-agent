@@ -44,6 +44,10 @@ def _prefix_names_served_profile(profile: str) -> bool:
 
 
 # Per-request /p/<profile>/ selection: set by the profile-prefix middleware, read by handlers.
+_AGENT_READ_ONLY_ROUTES = frozenset({
+    ("GET", "/health"), ("GET", "/health/detailed"), ("GET", "/v1/health"), ("GET", "/v1/models"),
+})
+
 _api_request_profile: ContextVar[Optional[str]] = ContextVar(
     "api_server_request_profile", default=None)
 _api_request_browser_control_principal: ContextVar[str] = ContextVar(
@@ -1555,10 +1559,12 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         """Validate the Bearer token; None when OK, else a 401. The no-key branch (connect()
         refuses to start without API_SERVER_KEY) exists for tests/manual wiring on the default
         listener only; named profiles fail closed rather than inherit the owner's key."""
-        agent_id = request.get("agent_id")
-        if isinstance(agent_id, str) and agent_id:
-            return None  # authenticated per agent by agent_policy_middleware
         profile = _api_request_profile.get()
+        agent_id = request.get("agent_id")
+        if isinstance(agent_id, str) and agent_id and not (profile and profile != "default"):
+            # Authenticated per agent by agent_policy_middleware. Named profiles fail closed for
+            # agent tokens, as upstream does for the owner's key (review T2, 27/09/2026).
+            return None
         expected_key = self._expected_api_key()
         if not expected_key:
             if not (profile and profile != "default"):
@@ -1577,6 +1583,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 return None
         logger.warning("API server rejected invalid API key: %s", self._request_audit_log_suffix(request))
         return self._auth_failed_response()
+
+    # Routes an agent token may reach without "api:agent": read-only, no agent run.
+    _AGENT_READ_ONLY_ROUTES_DOC = "GET /health, /health/detailed, /v1/health, /v1/models"
 
     def agent_policy_middleware(self):
         """aiohttp middleware: per-agent tokens (agent_policy.PolicyStore) with quota + concurrency.
@@ -1605,6 +1614,15 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             if policy is None:
                 return await handler(request)
             request["agent_id"] = policy.agent_id
+            if (request.method, request.path) not in _AGENT_READ_ONLY_ROUTES and not policy.allows("api:agent"):
+                # Running the agent brings its whole toolset (terminal included), which would bypass
+                # the tool policy that only the MCP enforces (review T2, 27/09/2026).
+                store.record_denial(policy.agent_id, "api", "forbidden_endpoint", f"{request.method} {request.path}")
+                return web.json_response(
+                    {"error": {"message": f"Agent {policy.agent_id} may not use {request.path}; "
+                               "running the agent requires the api:agent permission",
+                               "type": "permission_error", "code": "forbidden_endpoint"}},
+                    status=403)
             wait = store.take_rate_slot(policy)
             reason = "rate_limited" if wait is not None else None
             if reason is None and not gate.try_acquire(policy):
