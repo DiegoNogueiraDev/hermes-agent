@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 WEB_TTL_SECONDS = 3600
 GIT_ENTRY_MAX_AGE_SECONDS = 7 * 24 * 3600
 GIT_TIMEOUT_SECONDS = 5
-CACHEABLE = {"search_files": "git", "web_search": "ttl", "web_extract": "ttl"}
+CACHEABLE = {"search_files": "git", "find_files": "git", "web_search": "ttl", "web_extract": "ttl"}
 
 _initialized: set[str] = set()
 

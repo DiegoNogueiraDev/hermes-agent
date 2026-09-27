@@ -34,7 +34,7 @@ _HERMES_CORE_TOOLS = [
     # Terminal + process management
     "terminal", "process",
     # File manipulation
-    "read_file", "write_file", "patch", "search_files",
+    "read_file", "write_file", "patch", "search_files", "find_files",
     # Vision + image generation
     "vision_analyze", "image_generate",
     # Skills
@@ -158,7 +158,7 @@ TOOLSETS = {
     
     "file": {
         "description": "File manipulation tools: read, write, patch (with fuzzy matching), and search (content + files)",
-        "tools": ["read_file", "write_file", "patch", "search_files"],
+        "tools": ["read_file", "write_file", "patch", "search_files", "find_files"],
         "includes": []
     },
     

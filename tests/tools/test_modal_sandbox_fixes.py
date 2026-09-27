@@ -42,7 +42,7 @@ class TestToolResolution:
             quiet_mode=True,
         )
         names = {t["function"]["name"] for t in tools}
-        expected = {"terminal", "process", "read_file", "write_file", "search_files", "patch"}
+        expected = {"terminal", "process", "read_file", "write_file", "search_files", "find_files", "patch"}
         assert expected == names, f"Expected {expected}, got {names}"
 
     def test_terminal_tool_present(self):

@@ -20,6 +20,7 @@ IDEMPOTENT_TOOL_NAMES = frozenset(
     {
         "read_file",
         "search_files",
+        "find_files",
         "web_search",
         "web_extract",
         "session_search",
