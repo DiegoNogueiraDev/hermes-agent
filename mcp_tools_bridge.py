@@ -231,15 +231,27 @@ def _build_tool_function(tool_def: Dict[str, Any], task_id: str) -> Callable[...
     def _dispatch(call_args: Dict[str, Any]) -> str:
         from model_tools import handle_function_call
         clean_args = {k: v for k, v in call_args.items() if v is not None}
+        from mcp.server.mcpserver.exceptions import ToolError
+
         try:
-            return handle_function_call(
+            result = handle_function_call(
                 function_name=name,
                 function_args=clean_args,
                 task_id=task_id,
             )
         except Exception as e:
             logger.exception("MCP external tool '%s' failed", name)
-            return json.dumps({"error": str(e)})
+            raise ToolError(f"{name} failed: {e}") from e
+        # Hermes tools signal failure as {"error": ...}; surface it as an MCP tool error
+        # (isError: true) so the client does not treat the failure as a result.
+        try:
+            parsed = json.loads(result) if isinstance(result, str) else None
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("error"):
+            logger.warning("MCP external tool '%s' returned an error: %s", name, parsed["error"])
+            raise ToolError(str(parsed["error"]))
+        return result
 
     namespace: Dict[str, Any] = {
         "_dispatch": _dispatch,

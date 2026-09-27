@@ -88,6 +88,16 @@ class TestExternalToolExposure:
         result = _run_tool(server, "read_file", {"path": str(target)})
         assert "hello world" in result["content"]
 
+    def test_tool_error_reaches_the_mcp_client_as_error(self, mcp_server_external, _event_loop, tmp_path):
+        """A Hermes tool that answers {"error": ...} must surface as an MCP tool error
+        (isError: true on the wire), not as a successful result the client trusts."""
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        server, _bridge = mcp_server_external
+        missing = tmp_path / "does-not-exist.txt"
+        with pytest.raises(ToolError):
+            _run_tool(server, "read_file", {"path": str(missing)})
+
     def test_unknown_toolset_registers_nothing_extra(self, monkeypatch, tmp_path, _event_loop):
         pytest.importorskip("mcp", reason="MCP SDK not installed")
         import mcp_serve
