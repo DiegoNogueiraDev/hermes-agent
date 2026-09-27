@@ -275,6 +275,9 @@ class EventBridge:
         self._thread: Optional[threading.Thread] = None
         self._last_poll_timestamps: Dict[str, float] = {}  # session_key -> unix timestamp
         self._pending_approvals: Dict[str, dict] = {}  # populated from events
+        # (session_key, decision) -> int, wired by mcp_tools_bridge.enable_dangerous_tool_approvals()
+        # so permissions_respond() unblocks a real tools/approval.py wait, not only this bookkeeping.
+        self._dangerous_approval_resolver = None
         self._state_db_mtime: float = 0.0  # skip polling work when state.db is unchanged
         self._cached_sessions_index: dict = {}
 
@@ -330,12 +333,37 @@ class EventBridge:
         with self._lock:
             return sorted(self._pending_approvals.values(), key=lambda a: a.get("created_at", ""))
 
+    def track_dangerous_approval(self, approval_id: str, session_key: str, approval_data: dict) -> None:
+        """Record a dangerous-command approval raised by tools/approval.py (MCP external tools).
+
+        Makes it visible via permissions_list_open/events_poll like a chat-platform approval and
+        marks it so respond_to_approval() also resolves the real blocking wait.
+        """
+        with self._lock:
+            self._pending_approvals[approval_id] = {
+                "id": approval_id,
+                "session_key": session_key,
+                "source": "dangerous_command",
+                "command": approval_data.get("command", ""),
+                "description": approval_data.get("description", ""),
+                "created_at": time.time(),
+            }
+        self._enqueue(QueueEvent(0, "approval_requested", session_key,  # cursor set by _enqueue
+                                 {"approval_id": approval_id, "description": approval_data.get("description", "")}))
+
+    def set_dangerous_approval_resolver(self, resolver) -> None:
+        """Wire the (session_key, decision) -> int callable that unblocks a real approval wait."""
+        self._dangerous_approval_resolver = resolver
+
     def respond_to_approval(self, approval_id: str, decision: str) -> dict:
         """Resolve a pending approval (best-effort without gateway IPC)."""
         with self._lock:
             approval = self._pending_approvals.pop(approval_id, None)
         if not approval:
             return {"error": f"Approval not found: {approval_id}"}
+        if approval.get("source") == "dangerous_command" and self._dangerous_approval_resolver:
+            if not self._dangerous_approval_resolver(approval.get("session_key", ""), decision):
+                return {"error": f"Approval already resolved or expired: {approval_id}"}
         self._enqueue(QueueEvent(0, "approval_resolved", approval.get("session_key", ""),  # cursor set by _enqueue
                                  {"approval_id": approval_id, "decision": decision}))
         return {"resolved": True, "approval_id": approval_id, "decision": decision}

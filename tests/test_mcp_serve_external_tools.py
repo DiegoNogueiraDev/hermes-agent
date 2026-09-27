@@ -21,8 +21,10 @@ def _event_loop():
 
 
 def _run_tool(server, name, args=None):
+    from mcp.server.mcpserver import Context  # mcp 2.0: call_tool requires a context
+
     result = asyncio.get_event_loop().run_until_complete(
-        server._tool_manager.call_tool(name, args or {})
+        server._tool_manager.call_tool(name, args or {}, Context(mcp_server=server))
     )
     return json.loads(result) if isinstance(result, str) else result
 
@@ -119,7 +121,8 @@ class TestDangerousApprovalBridge:
         )
         assert "terminal" in {t.name for t in server._tool_manager.list_tools()}
 
-        from tools.approval import _gateway_notify_cbs, _gateway_queues, _ApprovalEntry
+        from tools.approval import _gateway_notify_cbs, _gateway_queues
+        from tools.approval_gateway_wait import _ApprovalEntry
 
         session_key = next(iter(_gateway_notify_cbs.keys()))
         cb = _gateway_notify_cbs[session_key]
