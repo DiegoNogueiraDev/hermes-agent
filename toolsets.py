@@ -209,6 +209,28 @@ TOOLSETS = {
         "interactive UI tools like clarify or send_message)",
         _core_without("text_to_speech", "clarify", "computer_use", kanban=False),
     ),
+    "hermes-mcp-external": _ts(
+        "MCP server (`hermes mcp serve --expose-tools`) — read-only/creative tools exposed to "
+        "external MCP clients (Claude Code, Cursor, etc). Excludes terminal, execute_code, "
+        "write_file, and patch — those live in hermes-mcp-external-dangerous and require explicit "
+        "opt-in plus approval for every dangerous command.",
+        [
+            "web_search", "web_extract",
+            "read_file", "search_files", "find_files",
+            "vision_analyze", "image_generate",
+            "browser_navigate", "browser_snapshot", "browser_click",
+            "browser_type", "browser_scroll", "browser_back",
+            "browser_press", "browser_get_images", "browser_vision",
+            "memory",
+        ],
+    ),
+    "hermes-mcp-external-dangerous": _ts(
+        "Additional MCP-exposed tools that can modify the filesystem or run commands. Only active "
+        "when explicitly requested (`hermes mcp serve --expose-tools hermes-mcp-external-dangerous`). "
+        "Every dangerous command still goes through the normal approval flow — nothing here runs silently.",
+        ["write_file", "patch", "terminal", "process", "execute_code"],
+        includes=["hermes-mcp-external"],
+    ),
     "hermes-cli": _bundle("Full interactive CLI toolset - all default tools plus cronjob management"),
 
     # Mirrors hermes-cli; `hermes tools` platform config filters it down and
