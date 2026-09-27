@@ -691,8 +691,10 @@ class APIServerAdapter(BasePlatformAdapter):
         if auth_header.startswith("Bearer "):
             token = auth_header[7:].strip()
             if hmac.compare_digest(token, self._api_key):
+                logger.debug("[%s] Auth OK from %s", self.name, request.remote)
                 return None  # Auth OK
 
+        logger.warning("[%s] Auth failed from %s (%s %s)", self.name, request.remote, request.method, request.path)
         return web.json_response(
             {"error": {"message": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}},
             status=401,
