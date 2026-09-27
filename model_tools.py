@@ -836,7 +836,26 @@ def _execute_tool(function_name: str, function_args: Dict[str, Any], original_ar
         from tools.connectors import dispatch_connector_call, is_connector_name
         if is_connector_name(function_name):
             return dispatch_connector_call(function_name, next_args, ids.tool_call_id)
-        return registry.dispatch(function_name, next_args, **dispatch_kwargs)
+        # Cross-agent cache for read-only tools (tool_result_cache.py): key = (tool, args, commit)
+        # for search_files/find_files, TTL for web_*. A cache failure never fails the call.
+        import tool_result_cache
+        cache_key = None
+        try:
+            cache_key = tool_result_cache.key_for(function_name, next_args, ids.task_id)
+            if cache_key is not None:
+                hit = tool_result_cache.fetch(cache_key)
+                if hit is not None:
+                    return hit
+        except Exception as _cache_err:
+            logger.warning("tool_result_cache lookup failed for %s: %s", function_name, _cache_err)
+            cache_key = None
+        out = registry.dispatch(function_name, next_args, **dispatch_kwargs)
+        if cache_key is not None:
+            try:
+                tool_result_cache.store(cache_key, out)
+            except Exception as _cache_err:
+                logger.warning("tool_result_cache store failed for %s: %s", function_name, _cache_err)
+        return out
 
     with _approval_observability(ids):
         if skip_tool_execution_middleware:

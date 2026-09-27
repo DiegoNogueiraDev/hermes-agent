@@ -223,6 +223,17 @@ authorization model, but the rules below apply uniformly.
 
 ---
 
+### 2.7 Per-Agent Access on the Network Surfaces
+
+When the MCP (streamable-http) and API server listeners are exposed beyond loopback, other agents call them with their own tokens instead of the shared operator token.
+
+- **Identity:** each agent gets a token issued by `python -m agent_policy add <agent_id>`, shown once and stored only as its sha256 in `state.db` (`agent_policies`). The `agent_id` is the agent's agentbus name.
+- **Authorization:** on MCP, every `tools/call` is checked against the agent's allowed tool patterns; a forbidden tool returns 403. On the API server, per-agent toolset restriction is not enforced yet: an agent token reaches the same toolsets as the operator.
+- **Quotas:** calls per minute are counted per agent across both surfaces (429 with `Retry-After`); simultaneous requests are capped per agent within each surface process.
+- **Audit:** every refusal is stored in `agent_denials` (agent, surface, reason, tool or path).
+- **Enrollment:** a network agent may request entry via the read-only beacon (`GET /v1/beacon`, `POST /v1/enroll`); this only creates a pending request. No credential is issued and no order is executed until the operator approves. Auto-enrollment with execution is never provided.
+- **Limits:** the shared operator tokens (`MCP_SERVER_TOKEN`, `API_SERVER_KEY`) stay unrestricted, tokens travel in plain HTTP inside the tailnet, and this is access control between cooperating agents, not isolation from a malicious co-tenant.
+
 ## 3. Scope
 
 ### 3.1 In Scope

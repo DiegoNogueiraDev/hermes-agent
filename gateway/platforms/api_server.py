@@ -1555,6 +1555,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         """Validate the Bearer token; None when OK, else a 401. The no-key branch (connect()
         refuses to start without API_SERVER_KEY) exists for tests/manual wiring on the default
         listener only; named profiles fail closed rather than inherit the owner's key."""
+        agent_id = request.get("agent_id")
+        if isinstance(agent_id, str) and agent_id:
+            return None  # authenticated per agent by agent_policy_middleware
         profile = _api_request_profile.get()
         expected_key = self._expected_api_key()
         if not expected_key:
@@ -1574,6 +1577,51 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 return None
         logger.warning("API server rejected invalid API key: %s", self._request_audit_log_suffix(request))
         return self._auth_failed_response()
+
+    def agent_policy_middleware(self):
+        """aiohttp middleware: per-agent tokens (agent_policy.PolicyStore) with quota + concurrency.
+
+        The shared API_SERVER_KEY keeps its behaviour (handled by _check_auth). An agent token
+        authenticates the caller, tags request["agent_id"], and applies its rate/concurrency limit;
+        an unknown token falls through so _check_auth still answers 401 exactly as before.
+        """
+        import hmac as _hmac
+
+        from agent_policy import ConcurrencyGate, PolicyStore
+
+        gate = ConcurrencyGate()
+
+        @web.middleware
+        async def _mw(request, handler):
+            header = request.headers.get("Authorization", "")
+            presented = header[7:].strip() if header.startswith("Bearer ") else ""
+            expected = self._expected_api_key()
+            if not presented or (expected and _hmac.compare_digest(presented.encode(), expected.encode())):
+                return await handler(request)
+            if getattr(self, "_policy_store", None) is None:
+                self._policy_store = PolicyStore()
+            store = self._policy_store
+            policy = store.authenticate(presented)
+            if policy is None:
+                return await handler(request)
+            request["agent_id"] = policy.agent_id
+            wait = store.take_rate_slot(policy)
+            reason = "rate_limited" if wait is not None else None
+            if reason is None and not gate.try_acquire(policy):
+                wait, reason = 1.0, "too_many_concurrent"
+            if reason is not None:
+                store.record_denial(policy.agent_id, "api", reason, f"{request.method} {request.path}")
+                seconds = str(int(wait + 0.999))
+                return web.json_response(
+                    {"error": {"message": f"Agent {policy.agent_id} over its limit",
+                               "type": "rate_limit_error", "code": "rate_limited", "retry_after": int(seconds)}},
+                    status=429, headers={"Retry-After": seconds})
+            try:
+                return await handler(request)
+            finally:
+                gate.release(policy)
+
+        return _mw
 
     @staticmethod
     def _normalize_callback_platform(value: str) -> str:
@@ -4439,7 +4487,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         try:
             mws = [mw for mw in (
                 self._make_profile_prefix_middleware(), cors_middleware, body_limit_middleware,
-                security_headers_middleware) if mw is not None]
+                security_headers_middleware, self.agent_policy_middleware()) if mw is not None]
             self._app = web.Application(middlewares=mws, client_max_size=MAX_REQUEST_BYTES)
             assert self._app is not None
             # Native routes + multiplex /p/<profile>/ mirrors (the prefix middleware validates and

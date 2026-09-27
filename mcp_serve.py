@@ -689,7 +689,7 @@ _TOOL_NAMES = (
 )
 
 
-def create_mcp_server(event_bridge: Optional[EventBridge] = None) -> "MCPServer":
+def create_mcp_server(event_bridge: Optional[EventBridge] = None, expose_tools: Optional[str] = None) -> "MCPServer":
     """Create and return the Hermes MCP server with all tools registered."""
     if not _MCP_SERVER_AVAILABLE:
         raise ImportError(f"MCP server requires the 'mcp' package. Install with: {sys.executable} -m pip install 'mcp'")
@@ -698,23 +698,93 @@ def create_mcp_server(event_bridge: Optional[EventBridge] = None) -> "MCPServer"
         "conversations across Telegram, Discord, Slack, WhatsApp, Signal, "
         "Matrix, and other connected platforms."
     ))
-    handlers = _ToolHandlers(event_bridge or EventBridge())
+    bridge = event_bridge or EventBridge()
+    handlers = _ToolHandlers(bridge)
     for name in _TOOL_NAMES:
         mcp.tool()(getattr(handlers, name))
+
+    if expose_tools:
+        import uuid as _uuid
+
+        from mcp_tools_bridge import enable_dangerous_tool_approvals, register_external_tools
+        from toolsets import resolve_toolset
+
+        task_id = f"mcp-external-{_uuid.uuid4().hex[:8]}"
+        registered = register_external_tools(mcp, expose_tools, task_id=task_id)
+
+        dangerous_tools = {"terminal", "process", "execute_code", "write_file", "patch"}
+        if dangerous_tools & set(resolve_toolset(expose_tools)):
+            enable_dangerous_tool_approvals(bridge, session_key=task_id)
+            logger.info("MCP: dangerous-tool approvals routed through permissions_list_open/respond")
+
+        if not registered:
+            logger.warning(
+                "MCP: expose_tools=%r resolved to zero available tools "
+                "(unknown toolset name, or every tool's check_fn failed)",
+                expose_tools,
+            )
+
     return mcp
 
 
-def run_mcp_server(verbose: bool = False) -> None:
-    """Start the Hermes MCP server on stdio."""
+def run_mcp_server(
+    verbose: bool = False,
+    expose_tools: Optional[str] = None,
+    transport: Optional[str] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+) -> None:
+    """Start the Hermes MCP server.
+
+    Args:
+        verbose: Enable debug logging on stderr.
+        expose_tools: Toolset name to expose as MCP tools (CLI
+            ``--expose-tools`` flag). Falls back to ``HERMES_MCP_EXPOSE_TOOLS``
+            env var, then ``mcp_server.expose_tools`` in config.yaml. None of
+            those set means only the 10 messaging-bridge tools are exposed.
+        transport: "stdio" (default — spawned locally by the calling MCP
+            client) or "streamable-http" (real network listener, e.g. for
+            other machines on a Tailscale tailnet to reach this server).
+            Falls back to ``HERMES_MCP_TRANSPORT``, then
+            ``mcp_server.transport`` in config.yaml.
+        host: Bind host for "streamable-http". Refuses to start on a
+            non-loopback host without ``MCP_SERVER_TOKEN`` set (mirrors
+            ``gateway/platforms/api_server.py``'s guard).
+        port: Bind port for "streamable-http".
+    """
     if not _MCP_SERVER_AVAILABLE:
-        print("Error: MCP server requires the 'mcp' package.\n"
-              f"Install with: {sys.executable} -m pip install 'mcp'", file=sys.stderr)
+        print(
+            "Error: MCP server requires the 'mcp' package.\n"
+            f"Install with: {sys.executable} -m pip install 'mcp'",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING, stream=sys.stderr)
+
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    else:
+        logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+
+    from mcp_tools_bridge import resolve_expose_toolset, resolve_network_settings
+    expose_tools = resolve_expose_toolset(expose_tools)
+    net = resolve_network_settings(transport, host, port)
+
+    if net["transport"] == "streamable-http":
+        # Access logging (who authenticated, who was rejected) matters for
+        # a network-reachable listener regardless of --verbose — keep it at
+        # INFO without raising the whole app's log level.
+        logging.getLogger("hermes.mcp_tools_bridge").setLevel(logging.INFO)
+
     bridge = EventBridge()
     bridge.start()
-    server = create_mcp_server(event_bridge=bridge)
+
+    server = create_mcp_server(event_bridge=bridge, expose_tools=expose_tools)
+
     import asyncio
+
+    if net["transport"] == "streamable-http":
+        _run_streamable_http(server, bridge, net["host"], net["port"])
+        return
 
     async def _run():
         try:
@@ -723,6 +793,80 @@ def run_mcp_server(verbose: bool = False) -> None:
             bridge.stop()
 
     try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        bridge.stop()
+
+
+
+
+def _run_streamable_http(server: "FastMCP", bridge: "EventBridge", host: str, port: int) -> None:
+    """Serve *server* over MCP's streamable-http transport (Starlette + uvicorn).
+
+    Requires ``MCP_SERVER_TOKEN`` whenever *host* is not loopback — the MCP
+    SDK has no built-in authentication, unlike the API server, so this
+    enforces the same "no auth, no network bind" guard by hand.
+    """
+    import uvicorn
+
+    from gateway.platforms.base import is_network_accessible
+    from mcp_tools_bridge import build_bearer_auth_middleware
+
+    token = os.environ.get("MCP_SERVER_TOKEN", "")
+
+    if is_network_accessible(host):
+        if not token:
+            print(
+                f"Error: refusing to start on {host} — MCP_SERVER_TOKEN is not set.\n"
+                "Set MCP_SERVER_TOKEN in ~/.hermes/.env or bind to 127.0.0.1.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        try:
+            from hermes_cli.auth import has_usable_secret
+            if not has_usable_secret(token, min_length=8):
+                print(
+                    f"Error: refusing to start on {host} — MCP_SERVER_TOKEN looks like a "
+                    "placeholder. Generate a real secret (e.g. `openssl rand -hex 32`).",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        except ImportError:
+            pass
+
+    server.settings.host = host
+    server.settings.port = port
+    if is_network_accessible(host):
+        # The SDK's DNS-rebinding protection allowlists only loopback Host
+        # headers by default — add our actual bind address so real clients
+        # (e.g. another Tailscale machine) aren't rejected with 421.
+        from mcp.server.fastmcp.server import TransportSecuritySettings
+        server.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", f"{host}:*"],
+            allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", f"http://{host}:*"],
+        )
+    app = server.streamable_http_app()
+    if token:
+        from agent_policy import PolicyStore
+        app.add_middleware(build_bearer_auth_middleware(token, store=PolicyStore()))
+    else:
+        logger.warning(
+            "MCP: no MCP_SERVER_TOKEN set — all requests on %s:%d are accepted "
+            "without authentication (fine on loopback only).", host, port,
+        )
+
+    config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+    uv_server = uvicorn.Server(config)
+
+    async def _run():
+        try:
+            await uv_server.serve()
+        finally:
+            bridge.stop()
+
+    try:
+        import asyncio
         asyncio.run(_run())
     except KeyboardInterrupt:
         bridge.stop()

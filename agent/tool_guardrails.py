@@ -18,7 +18,7 @@ from agent.tool_result_classification import file_mutation_result_landed, is_gua
 
 
 IDEMPOTENT_TOOL_NAMES = frozenset({
-    "read_file", "search_files", "web_search", "web_extract", "session_search", "skill_view", "skills_list",
+    "read_file", "search_files", "find_files", "web_search", "web_extract", "session_search", "skill_view", "skills_list",
     "browser_snapshot", "browser_console", "browser_get_images", "mcp_filesystem_read_file",
     "mcp_filesystem_read_text_file", "mcp_filesystem_read_multiple_files", "mcp_filesystem_list_directory",
     "mcp_filesystem_list_directory_with_sizes", "mcp_filesystem_directory_tree", "mcp_filesystem_get_file_info",

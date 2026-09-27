@@ -604,6 +604,49 @@ CREATE INDEX IF NOT EXISTS idx_session_model_usage_session ON session_model_usag
 CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
 CREATE INDEX IF NOT EXISTS idx_async_delegations_delivery
     ON async_delegations(delivery_state, completed_at);
+CREATE TABLE IF NOT EXISTS agent_policies (
+    agent_id TEXT PRIMARY KEY,
+    token_sha256 TEXT NOT NULL UNIQUE,
+    tools TEXT NOT NULL DEFAULT '["*"]',
+    rate_per_min INTEGER NOT NULL DEFAULT 60,
+    max_concurrent INTEGER NOT NULL DEFAULT 4,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_rate_windows (
+    agent_id TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    count INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, window_start)
+);
+
+CREATE TABLE IF NOT EXISTS agent_denials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    agent_id TEXT NOT NULL,
+    surface TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    detail TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tool_cache (
+    key TEXT PRIMARY KEY,
+    tool TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_cache_stats (
+    tool TEXT PRIMARY KEY,
+    hits INTEGER NOT NULL DEFAULT 0,
+    misses INTEGER NOT NULL DEFAULT 0,
+    bypasses INTEGER NOT NULL DEFAULT 0,
+    saved_chars INTEGER NOT NULL DEFAULT 0
+);
+
 """
 
 # Indexes on later-added columns must run AFTER _reconcile_columns(), or executescript fails on legacy DBs.
