@@ -23,12 +23,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from hermes_cli.gateway import (  # noqa: E402
-    PROJECT_ROOT,
-    _build_user_local_paths,
-    _detect_venv_dir,
-    get_python_path,
-)
+from hermes_cli.gateway import _build_user_local_paths  # noqa: E402
+
+# Resolved locally, not from hermes_cli.gateway (upstream renames those helpers): the units always
+# target the checkout this script lives in, i.e. the isolated worktree, and that checkout's venv.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _detect_venv_dir():
+    venv = PROJECT_ROOT / "venv"
+    return venv if (venv / "bin" / "python").exists() else None
+
+
+def get_python_path() -> str:
+    venv = _detect_venv_dir()
+    return str(venv / "bin" / "python") if venv else sys.executable
 
 UNIT_DIR = Path.home() / ".config" / "systemd" / "user"
 
@@ -40,6 +49,12 @@ MCP_BIND_PORT = 8643
 # The dashboard exposes API keys and has no robust auth (see
 # hermes_cli/web_server.py::start_server), so it stays on loopback; reach it
 # from another machine with `ssh -L 9119:127.0.0.1:9119 lab-diego`.
+# ISOLATION (27/09/2026): `hermes update` (also triggered from the web dashboard) resolves the repo
+# from PROJECT_ROOT of the process that runs it and does `git reset --hard` + a venv re-sync there.
+# The dashboard therefore runs from the upstream clone the update manages, while MCP and the API
+# server run from THIS worktree (branch lab-base-v2) with their own venv. An update in the web UI
+# refreshes the dashboard's clone and never touches the code or deps serving the tailnet.
+DASHBOARD_ROOT = Path.home() / ".hermes" / "hermes-agent"
 DASHBOARD_BIND_HOST = "127.0.0.1"
 DASHBOARD_BIND_PORT = 9119
 
@@ -101,8 +116,10 @@ def build_units() -> dict[str, str]:
     # config enabling them; with only API_SERVER_ENABLED=true set (no
     # Telegram/Discord/etc tokens), it runs with just the API server active.
     api_exec = f"{python_path} -m hermes_cli.main gateway run --replace"
+    dash_bin = DASHBOARD_ROOT / "venv" / "bin"
+    dash_env = _common_env(str(dash_bin / "python"), str(DASHBOARD_ROOT / "venv"), str(dash_bin))
     dashboard_exec = (
-        f"{python_path} -m hermes_cli.main dashboard "
+        f"{dash_bin / 'python'} -m hermes_cli.main dashboard "
         f"--host {DASHBOARD_BIND_HOST} --port {DASHBOARD_BIND_PORT} --no-open"
     )
 
@@ -117,7 +134,7 @@ def build_units() -> dict[str, str]:
         ),
         "hermes-dashboard.service": _unit(
             "Hermes dashboard (loopback only; ssh -L 9119:127.0.0.1:9119)",
-            dashboard_exec, working_dir, env_lines,
+            dashboard_exec, str(DASHBOARD_ROOT), dash_env,
         ),
     }
 

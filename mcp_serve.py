@@ -834,19 +834,19 @@ def _run_streamable_http(server: "FastMCP", bridge: "EventBridge", host: str, po
         except ImportError:
             pass
 
-    server.settings.host = host
-    server.settings.port = port
+    transport_security = None
     if is_network_accessible(host):
         # The SDK's DNS-rebinding protection allowlists only loopback Host
         # headers by default — add our actual bind address so real clients
         # (e.g. another Tailscale machine) aren't rejected with 421.
-        from mcp.server.fastmcp.server import TransportSecuritySettings
-        server.settings.transport_security = TransportSecuritySettings(
+        # mcp 2.0: host/transport_security are streamable_http_app() arguments.
+        from mcp.server.transport_security import TransportSecuritySettings
+        transport_security = TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", f"{host}:*"],
             allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", f"http://{host}:*"],
         )
-    app = server.streamable_http_app()
+    app = server.streamable_http_app(host=host, transport_security=transport_security)
     if token:
         from agent_policy import PolicyStore
         app.add_middleware(build_bearer_auth_middleware(token, store=PolicyStore()))
